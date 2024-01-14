@@ -1,0 +1,133 @@
+# Waveshare 7.5in three colors example.
+# Go see https://github.com/Madelena/esphome-weatherman-dashboard/blob/main/weatherman.yaml for an example with more logic !
+esphome:
+  name: eink-display
+  friendly_name: eink display
+  on_boot: # "What to do when starting the ESP board ?"
+    priority: 200.0
+    then:
+      - logger.log: "Refreshing display..." # Say hello
+      - script.execute: update_screen # Call a function design to handle all screen refreshes
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret apikey # REPLACE WITH YOUR OWN
+
+ota:
+  password: !secret otakey # REPLACE WITH YOUR OWN
+
+wifi:
+  ssid: !secret wifi_ssid # REPLACE WITH YOUR OWN
+  password: !secret wifi_password # REPLACE WITH YOUR OWN
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Eink-Display Fallback Hotspot"
+    password: !secret fallbackkey # REPLACE WITH YOUR OWN
+
+captive_portal:
+
+# This section gives you three buttons in Home Assistant to pilot it from Home Assistant
+button:
+  - platform: shutdown
+    name: "Eink-Display - Shutdown"
+  - platform: restart
+    name: "Eink-Display - Restart"
+  - platform: template
+    name: "Eink-Display - Refresh Screen"
+    entity_category: config
+    on_press:
+      - script.execute: update_screen
+
+# This section exposes sensors to Home Assistant, so you know the state of your screen from your Home Assistant   
+# My variables to update
+globals:
+  - id: recorded_display_refresh
+    type: int
+    restore_value: yes
+    initial_value: "0"
+sensor:
+  # When was it updated ?
+  - platform: template
+    name: "Eink-Display - Last Update"
+    device_class: timestamp
+    entity_category: "diagnostic"
+    id: display_last_update
+
+  # How many time was it refreshed since the beginning ? E-ink screens lifetime mainly depends on that.
+  - platform: template
+    name: "Eink-Display - Recorded Display Refresh"
+    accuracy_decimals: 0
+    unit_of_measurement: "Refreshes"
+    state_class: "total_increasing"
+    entity_category: "diagnostic"
+    lambda: "return id(recorded_display_refresh);"
+
+  # How is the Wifi signal ?
+  - platform: wifi_signal
+    name: "Eink-Display - WiFi Signal Strength"
+    id: wifisignal
+    unit_of_measurement: "dBm"
+    entity_category: "diagnostic"
+    update_interval: 60s
+
+# Script for updating screen - Refresh display and publish refresh count and time.
+script:
+  - id: update_screen
+    then:
+      - logger.log: "Updating screen" # "FYI ESPHome"
+      - component.update: eink_display # Do the job
+      - lambda: "id(recorded_display_refresh) += 1;" # Increment our counter
+
+# Include custom fonts from GFonts. You can also use local custom files but 'gfonts://' means it will be downloaded by ESPHome and added to your board directly.
+# Find your font on https://fonts.google.com/
+font:
+  - file: "gfonts://Roboto"
+    id: roboto
+    size: 20
+  - file: "gfonts://Roboto"
+    id: roboto_title
+    size: 50
+  - file: 'gfonts://Material+Symbols+Outlined' # Use mdi ! You need to declare the glyphs number from https://fonts.google.com/icons 
+    id: mdi_title
+    size: 50
+    glyphs: ["\U0000F6E9"] # heart-ecg. To understand where to find the glyph number, look at the bottom of the right panel on https://fonts.google.com/icons?selected=Material+Symbols+Outlined:ecg_heart:FILL@0;wght@400;GRAD@0;opsz@24&icon.query=ecg+heart
+
+# Pins and config for Waveshare ePaper ESP Board. You might need to change it depending on your screen
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO14
+display:
+  - platform: waveshare_epaper
+    id: eink_display
+    cs_pin: GPIO15
+    dc_pin: GPIO27
+    busy_pin:
+     number: GPIO25
+     inverted: true # THIS IS TO MODIFY. It depends on your screen, you might need to put it to false (https://github.com/mcauser/micropython-waveshare-epaper/issues/2)
+    reset_pin: GPIO26
+    reset_duration: 2ms
+    model: 7.50in-bV2 # THIS IS TO MODIFY. Refers to the README.md.
+    update_interval: never
+    rotation: 90° # I want it to be vertical
+    lambda: |-
+      // Map weather states to MDI characters !
+      std::map<std::string, std::string> weather_icon_map
+        {
+          {"heart-ecg", "\U0000F6E9"}
+        };
+
+      // PRINT ICON: x / y / font family / Alignment method / content (in this case an icon from mdi)
+      it.printf(240, 330, id(mdi_title), TextAlign::TOP_CENTER, weather_icon_map["heart-ecg"].c_str());
+      
+      // PRINT TEXT: x / y / font family / Alignment method / content
+      it.printf(240, 390, id(roboto), TextAlign::TOP_CENTER, "Success...");
